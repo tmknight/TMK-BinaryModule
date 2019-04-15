@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 
 namespace TMK_BinaryModule
 {
     [Cmdlet(VerbsLifecycle.Start, "MT")]
-    //[OutputType(typeof(Finish))]
     public class Start_Multithreading : PSCmdlet
     {
         // The object(s) on which to execute the ScriptBlock
@@ -14,7 +14,7 @@ namespace TMK_BinaryModule
             ValueFromPipeline = true,
             Position = 0)]
         [Alias("InputObjects")]
-        public Array InputObject { get; set; }
+        public ArrayList InputObject { get; set; }
 
         // Command or script to run
         // Must have a parameter of an object from inputobjects
@@ -28,8 +28,8 @@ namespace TMK_BinaryModule
         [Alias("Arguments")]
         public Array ArgumentList { get; set; }
 
-    // Maximum concurrent threads to start
-    [Parameter(Mandatory = false,
+        // Maximum concurrent threads to start
+        [Parameter(Mandatory = false,
             Position = 3)]
         public int MaxThreads { get; set; } = 20;
 
@@ -41,15 +41,23 @@ namespace TMK_BinaryModule
         {
             // Build the results
             ArrayList final = new ArrayList();
-            using (RunspacePool runspacePool = RunspaceFactory.CreateRunspacePool(1,MaxThreads))
+            int c = 0;
+            int count = InputObject.Count;
+
+            if (MaxThreads < 20)
+            {
+                MaxThreads = 20;
+            }
+            using (RunspacePool runspacePool = RunspaceFactory.CreateRunspacePool(1, MaxThreads))
             {
                 try
                 {
                     runspacePool.Open();
+                    ProgressRecord progressRecord = new ProgressRecord(1, "Action in progress...", "Processing...");
+
                     foreach (object obj in InputObject)
                     {
-                        PowerShell powerShell = PowerShell.Create();
-                        powerShell
+                        PowerShell powerShell = PowerShell.Create()
                             .AddScript(ScriptBlock)
                             .AddArgument(obj);
 
@@ -60,32 +68,46 @@ namespace TMK_BinaryModule
                         catch (Exception)
                         {
                         }
+                        powerShell.RunspacePool = runspacePool;
 
                         IAsyncResult psAsyncResult = powerShell.BeginInvoke();
+                        c++;
+
+                        int pVal = (c / count) * 100;
+                        string sVal = String.Format("{0:N0}", pVal);
+                        int perc = int.Parse(sVal);
+
+                        string activity = c + " of " + count + " threads completed";
+                        if (NoProgress.IsPresent == false)
+                        {
+                            progressRecord.PercentComplete = perc;
+                            progressRecord.Activity = activity;
+                            progressRecord.StatusDescription = perc + "% complete";
+                            WriteProgress(progressRecord);
+                        }
+
                         PSDataCollection<PSObject> psOutput = powerShell.EndInvoke(psAsyncResult);
                         final.Add(psOutput);
                         powerShell.Dispose();
                     } // End foreach
-                    runspacePool.Close();
-                    runspacePool.Dispose();
+
+                    if (NoProgress.IsPresent == false)
+                    {
+                        progressRecord.PercentComplete = 100;
+                        progressRecord.StatusDescription = "100% complete";
+                        WriteProgress(progressRecord);
+                    }
                 }
                 catch (Exception)
                 {
                     throw;
                 }
-
+                runspacePool.Close();
+                runspacePool.Dispose();
             } // End using
 
-            WriteObject(final, true);
-            //WriteObject(new Finish
-            //{
-            //    Results = final.ToArray()
-            //});
+            // Output to console
+            WriteObject(final.ToArray(), true);
         } // End begin
     }
-
-    //public class Finish
-    //{
-    //    public Array Results { get; set; }
-    //}
 }
